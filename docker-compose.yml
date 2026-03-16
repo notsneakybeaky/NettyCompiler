@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  netty:
+    build: ./netty-core
+    ports:
+      - "25565:25565"   # MC / game protocol
+      - "8080:8080"     # HTTP API + script upload
+    depends_on:
+      - python-worker
+    environment:
+      - PYTHON_BRIDGE_URL=http://python-worker:8000
+
+  python-worker:
+    build: ./python-worker
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    restart: always     # auto-restart on script crash
+
+volumes:
+  data:
