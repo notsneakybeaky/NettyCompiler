@@ -119,5 +119,3 @@ netty-runtime/
 | 3 | Rewrite any layer completely. Other layers don't break. |
 
 ---
-
-*Netty Runtime v2.0 — March 2026. Oakland University, Rochester MI.*
