@@ -1,4 +1,4 @@
-# The Netty Compiler
+# The NettyCompiler
 
 **It's Flask but for multiplayer systems and networked applications.**
 
