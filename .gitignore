@@ -1,0 +1,84 @@
+# ── Java / Gradle ─────────────────────────────────────────────────────────────
+build/
+.gradle/
+out/
+*.class
+*.jar
+*.war
+*.ear
+local.properties
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+*.swp
+*.swo
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.env
+*.egg-info/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+secrets.properties
+config.local.*
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.docker/
+docker-compose.override.yml
+
+# ── Data / Database ───────────────────────────────────────────────────────────
+data/*.db
+data/*.db-shm
+data/*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+*.log.*
+
+# ── Flutter ───────────────────────────────────────────────────────────────────
+flutter-dashboard/.dart_tool/
+flutter-dashboard/build/
+flutter-dashboard/.flutter-plugins
+flutter-dashboard/.flutter-plugins-dependencies
+flutter-dashboard/pubspec.lock
+flutter-dashboard/.packages
+flutter-dashboard/coverage/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Scripts (uploaded, not committed) ─────────────────────────────────────────
+scripts/local/
+scripts/test/
+
+CLAUDE.md
+PHASE0_CLASS_MAP.md
+PROMPT_TEMPLATE.md
