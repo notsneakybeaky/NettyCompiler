@@ -17,18 +17,18 @@ registry: dict[str, dict] = {}
 
 
 class ScriptPayload(BaseModel):
-    scriptId: str
+    script_id: str
     source: str
     hooks: list[str] = []
-    packetTypes: list[str] = []
+    packet_types: list[str] = []
 
 
 class HookPayload(BaseModel):
-    sessionId: str
+    """Matches the JSON contract sent by PythonHookBridge (snake_case)."""
+    session_id: str
     hook: str
-    packetType: Optional[str] = None
+    message_type: Optional[str] = None
     payload: dict[str, Any] = {}
-    tick: int = 0
 
 
 # --- Script Management ---
@@ -38,18 +38,18 @@ async def load_script(payload: ScriptPayload):
     """Compile and register a script. Hot swap = dict key overwrite."""
     try:
         namespace = {}
-        exec(compile(payload.source, payload.scriptId, "exec"), namespace)
+        exec(compile(payload.source, payload.script_id, "exec"), namespace)
 
         if "handle" not in namespace:
             raise ValueError("Script must define a 'handle' function")
 
-        registry[payload.scriptId] = {
+        registry[payload.script_id] = {
             "handle": namespace["handle"],
             "hooks": payload.hooks,
-            "packet_types": payload.packetTypes,
+            "packet_types": payload.packet_types,
         }
 
-        return {"status": "loaded", "scriptId": payload.scriptId}
+        return {"status": "loaded", "script_id": payload.script_id}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -61,7 +61,7 @@ async def unload_script(script_id: str):
     if script_id not in registry:
         raise HTTPException(status_code=404, detail=f"Script '{script_id}' not found")
     del registry[script_id]
-    return {"status": "unloaded", "scriptId": script_id}
+    return {"status": "unloaded", "script_id": script_id}
 
 
 @app.get("/scripts")
@@ -81,9 +81,9 @@ async def _dispatch(hook: str, payload: HookPayload) -> dict:
         if entry["hooks"] and hook not in entry["hooks"]:
             continue
 
-        # Filter: for on_packet, only call scripts registered for this packet type
+        # Filter: for on_packet, only call scripts registered for this message type
         if hook == "on_packet" and entry["packet_types"]:
-            if payload.packetType not in entry["packet_types"]:
+            if payload.message_type not in entry["packet_types"]:
                 continue
 
         fn = entry["handle"]
@@ -92,9 +92,9 @@ async def _dispatch(hook: str, payload: HookPayload) -> dict:
                 result = await fn(payload.model_dump())
             else:
                 result = fn(payload.model_dump())
-            results.append({"scriptId": script_id, "result": result})
+            results.append({"script_id": script_id, "result": result})
         except Exception as e:
-            results.append({"scriptId": script_id, "error": str(e)})
+            results.append({"script_id": script_id, "error": str(e)})
 
     # Merge actions from all scripts
     actions = []

@@ -16,41 +16,58 @@ import java.net.http.HttpResponse;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PythonHookBridge — implements MessageHandler by forwarding every hook call
- * to the Python worker over HTTP. This is the boundary between Netty Core
- * and Application Logic.
+ * to a per-session Python container over HTTP.
  *
- * Knows about: Session interface, HTTP, JSON contract, MessageRegistry.
- * Does NOT know about: protocol internals, Python internals, script registry.
+ * Each session can be bound to its own container URL. Falls back to the
+ * default URL if no per-session override is set.
  *
- * RECONSTRUCTION FLOW (SEND):
- *   Python returns: { "type": "SEND", "message": { "type": "...", ... } }
- *   Bridge does:
- *     1. Read "message.type" from JSON
- *     2. Look up in MessageRegistry -> get Message class
- *     3. Deserialize via Jackson into the concrete Message
- *     4. session.send(message) -> Netty encodes and writes
+ * Hook endpoints:
+ *   POST /hooks/connect
+ *   POST /hooks/packet     (was /hooks/message — matches Python worker)
+ *   POST /hooks/disconnect
+ *   POST /scripts/load
  */
 public class PythonHookBridge implements MessageHandler {
 
     private final HttpClient http;
-    private final String baseUrl;
+    private final String defaultBaseUrl;
     private final ObjectMapper mapper;
     private final MessageRegistry messageRegistry;
+    private final ConcurrentHashMap<String, String> sessionUrls = new ConcurrentHashMap<>();
 
     /**
-     * @param pythonWorkerUrl  base URL of the Python FastAPI worker (e.g. "http://localhost:8000")
-     * @param messageRegistry  registry for resolving message types from Python responses
-     * @param jacksonFactory   configured Jackson factory for serialization
+     * @param defaultPythonUrl  fallback URL when no per-session URL is set
+     * @param messageRegistry   registry for resolving message types from Python responses
+     * @param jacksonFactory    configured Jackson factory for serialization
      */
-    public PythonHookBridge(String pythonWorkerUrl, MessageRegistry messageRegistry,
+    public PythonHookBridge(String defaultPythonUrl, MessageRegistry messageRegistry,
                             JacksonFactory jacksonFactory) {
         this.http = HttpClient.newBuilder().build();
-        this.baseUrl = pythonWorkerUrl;
+        this.defaultBaseUrl = defaultPythonUrl;
         this.mapper = jacksonFactory.getMapper();
         this.messageRegistry = messageRegistry;
+    }
+
+    /**
+     * Bind a session to a specific Python container URL.
+     */
+    public void setSessionUrl(String sessionId, String containerUrl) {
+        sessionUrls.put(sessionId, containerUrl);
+    }
+
+    /**
+     * Remove per-session URL binding (e.g. on disconnect).
+     */
+    public void removeSessionUrl(String sessionId) {
+        sessionUrls.remove(sessionId);
+    }
+
+    private String baseUrlFor(Session session) {
+        return sessionUrls.getOrDefault(session.getId(), defaultBaseUrl);
     }
 
     @Override
@@ -58,7 +75,7 @@ public class PythonHookBridge implements MessageHandler {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("session_id", session.getId());
         body.put("hook", "on_connect");
-        postAsync(baseUrl + "/hooks/connect", body)
+        postAsync(baseUrlFor(session) + "/hooks/connect", body)
                 .thenAccept(response -> handleActions(session, response));
     }
 
@@ -67,11 +84,11 @@ public class PythonHookBridge implements MessageHandler {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("session_id", session.getId());
-            body.put("hook", "on_message");
+            body.put("hook", "on_packet");
             body.put("message_type", message.getType());
             body.put("payload", mapper.valueToTree(message));
 
-            postAsync(baseUrl + "/hooks/message", body)
+            postAsync(baseUrlFor(session) + "/hooks/packet", body)
                     .thenAccept(response -> handleActions(session, response));
         } catch (Exception e) {
             System.err.println("[PythonHookBridge] Failed to serialize message: " + e.getMessage());
@@ -83,7 +100,8 @@ public class PythonHookBridge implements MessageHandler {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("session_id", session.getId());
         body.put("hook", "on_disconnect");
-        postAsync(baseUrl + "/hooks/disconnect", body);
+        postAsync(baseUrlFor(session) + "/hooks/disconnect", body);
+        removeSessionUrl(session.getId());
     }
 
     /**
@@ -91,7 +109,7 @@ public class PythonHookBridge implements MessageHandler {
      */
     public CompletableFuture<String> loadScript(String scriptId, String source) {
         Map<String, Object> body = Map.of("script_id", scriptId, "source", source);
-        return postAsync(baseUrl + "/scripts/load", body);
+        return postAsync(defaultBaseUrl + "/scripts/load", body);
     }
 
     private CompletableFuture<String> postAsync(String url, Map<String, Object> body) {
@@ -113,15 +131,6 @@ public class PythonHookBridge implements MessageHandler {
     /**
      * Process action list from Python response.
      * Actions: SEND, BLOCK, DISCONNECT
-     *
-     * JSON contract (Python -> Java):
-     * {
-     *   "actions": [
-     *     { "type": "SEND", "message": { "type": "...", ... } },
-     *     { "type": "BLOCK" },
-     *     { "type": "DISCONNECT" }
-     *   ]
-     * }
      */
     private void handleActions(Session session, String responseJson) {
         try {
