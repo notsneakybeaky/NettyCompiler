@@ -1,31 +1,27 @@
 package com.nettycompiler.session;
 
-import com.nettycompiler.core.*;
+import com.nettycompiler.core.ConnectionState;
+import com.nettycompiler.core.Message;
+import com.nettycompiler.core.Session;
 
 import io.netty.channel.Channel;
 
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * DefaultSession — concrete Session implementation owning both proxy legs.
- * Inbound channel: client → proxy.
- * Outbound channel: proxy → upstream server (null in standalone mode).
+ * DefaultSession — concrete Session implementation for WebSocket connections.
+ * Each session maps to one Netty channel, one user, and (eventually) one Docker container.
  */
 public class DefaultSession implements Session {
 
     private final String id;
-    private final Channel inboundChannel;
-    private volatile Channel outboundChannel;
+    private final Channel channel;
     private volatile ConnectionState state;
-    private final Protocol protocol;
-    private final AtomicInteger tick = new AtomicInteger(0);
 
-    public DefaultSession(Channel inboundChannel, Protocol protocol) {
+    public DefaultSession(Channel channel) {
         this.id = UUID.randomUUID().toString();
-        this.inboundChannel = inboundChannel;
-        this.protocol = protocol;
-        this.state = ConnectionState.HANDSHAKING;
+        this.channel = channel;
+        this.state = ConnectionState.CONNECTING;
     }
 
     @Override
@@ -34,26 +30,17 @@ public class DefaultSession implements Session {
     }
 
     @Override
-    public void send(Packet packet) {
-        if (inboundChannel != null && inboundChannel.isActive()) {
-            inboundChannel.writeAndFlush(packet);
-        }
-    }
-
-    @Override
-    public void forward(Packet packet) {
-        if (outboundChannel != null && outboundChannel.isActive()) {
-            outboundChannel.writeAndFlush(packet);
+    public void send(Message message) {
+        if (channel != null && channel.isActive()) {
+            channel.writeAndFlush(message);
         }
     }
 
     @Override
     public void disconnect() {
-        if (inboundChannel != null && inboundChannel.isActive()) {
-            inboundChannel.close();
-        }
-        if (outboundChannel != null && outboundChannel.isActive()) {
-            outboundChannel.close();
+        state = ConnectionState.CLOSING;
+        if (channel != null && channel.isActive()) {
+            channel.close();
         }
     }
 
@@ -67,28 +54,7 @@ public class DefaultSession implements Session {
         this.state = state;
     }
 
-    @Override
-    public int getTick() {
-        return tick.get();
-    }
-
-    public int incrementTick() {
-        return tick.incrementAndGet();
-    }
-
-    public void setOutboundChannel(Channel outboundChannel) {
-        this.outboundChannel = outboundChannel;
-    }
-
-    public Channel getInboundChannel() {
-        return inboundChannel;
-    }
-
-    public Channel getOutboundChannel() {
-        return outboundChannel;
-    }
-
-    public Protocol getProtocol() {
-        return protocol;
+    public Channel getChannel() {
+        return channel;
     }
 }

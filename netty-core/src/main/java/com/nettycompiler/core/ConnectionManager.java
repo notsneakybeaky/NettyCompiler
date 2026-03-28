@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ConnectionManager — tracks all active sessions.
- * Thread-safe. Netty Core only.
+ * Thread-safe via ConcurrentHashMap. Netty Core only.
  */
 public class ConnectionManager {
 
@@ -35,11 +35,11 @@ public class ConnectionManager {
     }
 
     /**
-     * Broadcast a packet to all connected sessions.
+     * Broadcast a message to all connected sessions.
      */
-    public void broadcast(Packet packet) {
+    public void broadcast(Message message) {
         for (DefaultSession session : sessions.values()) {
-            session.send(packet);
+            session.send(message);
         }
     }
 }
