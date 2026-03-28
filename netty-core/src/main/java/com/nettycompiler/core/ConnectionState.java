@@ -1,12 +1,11 @@
 package com.nettycompiler.core;
 
 /**
- * Connection states for the protocol state machine.
- * Needs to be adjusted, this needs to create as many states as I want it to.
+ * Connection states for the WebSocket session lifecycle.
  */
 public enum ConnectionState {
-    HANDSHAKING,
-    STATUS,
-    LOGIN,
-    PLAY
+    CONNECTING,      // WebSocket handshake in progress
+    AUTHENTICATING,  // Session init / auth exchange (future)
+    ACTIVE,          // Normal message exchange
+    CLOSING          // Graceful shutdown in progress
 }

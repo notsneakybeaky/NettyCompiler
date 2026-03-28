@@ -24,20 +24,17 @@ dependencies {
     // JSON
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.0")
 
-    // Database
-    implementation("com.zaxxer:HikariCP:5.1.0")
-    implementation("org.xerial:sqlite-jdbc:3.45.2.0")
-
     // Logging
     implementation("org.slf4j:slf4j-api:2.0.12")
     implementation("ch.qos.logback:logback-classic:1.5.3")
 
-    // Protocol MC subproject
-    implementation(project(":protocol-mc"))
+    // Subprojects
+    implementation(project(":netty-core"))
+    implementation(project(":protocol-ws"))
 }
 
 application {
-    mainClass = "com.nettyruntime.Main"
+    mainClass = "com.nettycompiler.Main"
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {

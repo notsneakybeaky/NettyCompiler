@@ -1,9 +1,8 @@
 package com.nettycompiler.core;
 
 /**
- * Session — one connected client, owns both legs for proxy mode.
- * Inbound leg: client → proxy. Outbound leg: proxy → upstream server.
- * Either leg can intercept, mutate, block, or respond via Python hooks.
+ * Session — one connected client over WebSocket.
+ * Each session maps to one user, one Netty channel, and (eventually) one Docker container.
  */
 public interface Session {
 
@@ -13,22 +12,17 @@ public interface Session {
     String getId();
 
     /**
-     * Send a packet back to the connected client (inbound leg).
+     * Send a message to the connected client.
      */
-    void send(Packet packet);
+    void send(Message message);
 
     /**
-     * Forward a packet to the upstream server (outbound leg).
-     */
-    void forward(Packet packet);
-
-    /**
-     * Disconnect this session, closing both legs.
+     * Disconnect this session, closing the channel.
      */
     void disconnect();
 
     /**
-     * Get the current connection state (HANDSHAKING, STATUS, LOGIN, PLAY).
+     * Get the current connection state.
      */
     ConnectionState getState();
 
@@ -36,9 +30,4 @@ public interface Session {
      * Transition this session to a new connection state.
      */
     void setState(ConnectionState state);
-
-    /**
-     * Get the current tick count for this session.
-     */
-    int getTick();
 }

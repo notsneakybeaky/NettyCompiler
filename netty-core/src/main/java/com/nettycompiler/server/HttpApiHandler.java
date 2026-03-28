@@ -1,12 +1,15 @@
 package com.nettycompiler.server;
 
+import com.nettycompiler.core.MessageHandler;
 import com.nettycompiler.handler.PythonHookBridge;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.netty.buffer.Unpooled;
-import io.netty.channel.*;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 
@@ -17,14 +20,17 @@ import java.util.Map;
  * Routes:
  *   POST /scripts   — upload a script (forwards to Python worker)
  *   GET  /status    — server health check
+ *
+ * Non-matching requests are passed through to the WebSocket handler.
  */
 public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-    private final PythonHookBridge pythonBridge;
+    private final MessageHandler messageHandler;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public HttpApiHandler(PythonHookBridge pythonBridge) {
-        this.pythonBridge = pythonBridge;
+    public HttpApiHandler(MessageHandler messageHandler) {
+        super(false); // Don't auto-release — we may pass through
+        this.messageHandler = messageHandler;
     }
 
     @Override
@@ -37,7 +43,8 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
         } else if (method == HttpMethod.GET && "/status".equals(uri)) {
             sendJson(ctx, 200, Map.of("status", "running"));
         } else {
-            sendJson(ctx, 404, Map.of("error", "not found"));
+            // Pass through to WebSocket handler
+            ctx.fireChannelRead(request.retain());
         }
     }
 
@@ -45,15 +52,20 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
         try {
             String body = request.content().toString(CharsetUtil.UTF_8);
             JsonNode payload = mapper.readTree(body);
-            String scriptId = payload.get("scriptId").asText();
+            String scriptId = payload.get("script_id").asText();
             String source = payload.get("source").asText();
 
-            pythonBridge.loadScript(scriptId, source)
-                    .thenAccept(result -> sendJson(ctx, 200, Map.of("status", "loaded", "scriptId", scriptId)))
-                    .exceptionally(err -> {
-                        sendJson(ctx, 500, Map.of("error", err.getMessage()));
-                        return null;
-                    });
+            if (messageHandler instanceof PythonHookBridge bridge) {
+                bridge.loadScript(scriptId, source)
+                        .thenAccept(result -> sendJson(ctx, 200,
+                            Map.of("status", "loaded", "script_id", scriptId)))
+                        .exceptionally(err -> {
+                            sendJson(ctx, 500, Map.of("error", err.getMessage()));
+                            return null;
+                        });
+            } else {
+                sendJson(ctx, 501, Map.of("error", "script loading not supported"));
+            }
         } catch (Exception e) {
             sendJson(ctx, 400, Map.of("error", e.getMessage()));
         }

@@ -1,27 +1,18 @@
 package com.nettycompiler.core;
 
-import io.netty.buffer.ByteBuf;
-
 /**
- * Protocol — turn bytes into packets.
- * This is the contract between Netty Core and any Protocol Plugin.
- * Implement this for MC, custom binary, or any future protocol.
+ * Protocol — contract for message serialization over a transport.
+ * The WebSocket implementation uses Jackson for JSON encode/decode.
  */
 public interface Protocol {
 
     /**
-     * Decode raw bytes into a typed Packet.
+     * Decode a JSON string into a typed Message.
      */
-    Packet decode(ByteBuf buf, ConnectionState state, PacketDirection direction);
+    Message decode(String json) throws Exception;
 
     /**
-     * Encode a typed Packet back into raw bytes.
+     * Encode a typed Message into a JSON string.
      */
-    void encode(Packet packet, ByteBuf buf);
-
-    /**
-     * Determine the next connection state after processing a packet.
-     * This drives the state machine (HANDSHAKING → STATUS/LOGIN → PLAY).
-     */
-    ConnectionState nextState(Packet packet, ConnectionState current);
+    String encode(Message message) throws Exception;
 }
