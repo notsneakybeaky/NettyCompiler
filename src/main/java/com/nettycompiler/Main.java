@@ -2,7 +2,6 @@ package com.nettycompiler;
 
 import com.nettycompiler.handler.PythonHookBridge;
 import com.nettycompiler.jackson.JacksonFactory;
-import com.nettycompiler.registry.DomainTypeRegistry;
 import com.nettycompiler.registry.MessageRegistry;
 import com.nettycompiler.server.NettyServer;
 import com.nettycompiler.ws.WebSocketProtocol;
@@ -25,12 +24,11 @@ public class Main {
         }
 
         // 1. Build registries
-        DomainTypeRegistry domainTypeRegistry = new DomainTypeRegistry();
         MessageRegistry messageRegistry = new MessageRegistry();
         registerBuiltinMessages(messageRegistry);
 
-        // 2. Build Jackson factory with domain type whitelist
-        JacksonFactory jacksonFactory = new JacksonFactory(domainTypeRegistry);
+        // 2. Build Jackson factory (snake_case, no domain type resolution)
+        JacksonFactory jacksonFactory = new JacksonFactory();
 
         // 3. Build protocol
         WebSocketProtocol protocol = new WebSocketProtocol(jacksonFactory, messageRegistry);
@@ -45,7 +43,7 @@ public class Main {
     }
 
     /**
-     * Register all built-in message types.
+     * Register all built-in protocol message types.
      * Every message type must be registered here — unregistered types are rejected.
      */
     private static void registerBuiltinMessages(MessageRegistry registry) {
@@ -54,6 +52,5 @@ public class Main {
         registry.register("error", ErrorMessage.class);
         registry.register("ping", PingMessage.class);
         registry.register("pong", PongMessage.class);
-        registry.register("domain_object", DomainObjectMessage.class);
     }
 }
