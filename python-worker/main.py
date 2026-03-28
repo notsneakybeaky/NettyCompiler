@@ -15,12 +15,21 @@ app = FastAPI(title="NettyCompiler Python Worker", version="2.0")
 # scriptId -> { "handle": callable, "hooks": list, "packet_types": list }
 registry: dict[str, dict] = {}
 
+# --- Persistent State ---
+# Survives across hot-flash cycles (code reloads). Cleared on /reset (pool reuse).
+state_store: dict[str, Any] = {}
+
 
 class ScriptPayload(BaseModel):
     script_id: str
     source: str
     hooks: list[str] = []
     packet_types: list[str] = []
+
+
+class HotFlashPayload(BaseModel):
+    source: str
+    script_id: str = "user_script"
 
 
 class HookPayload(BaseModel):
@@ -68,6 +77,41 @@ async def unload_script(script_id: str):
 async def list_scripts():
     """List all registered script IDs."""
     return {"scripts": list(registry.keys())}
+
+
+# --- Hot-Flash & Reset ---
+
+@app.post("/hot-flash")
+async def hot_flash(payload: HotFlashPayload):
+    """Load new code without clearing session state.
+    The state_store dict is injected into the script namespace so
+    user code can read/write persistent state across reloads.
+    """
+    try:
+        namespace = {"__state__": state_store}
+        exec(compile(payload.source, payload.script_id, "exec"), namespace)
+
+        if "handle" not in namespace:
+            raise ValueError("Script must define a 'handle' function")
+
+        registry[payload.script_id] = {
+            "handle": namespace["handle"],
+            "hooks": [],
+            "packet_types": [],
+        }
+
+        return {"status": "hot_flashed", "script_id": payload.script_id}
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/reset")
+async def reset():
+    """Clear all scripts and state. Used when returning a container to the warm pool."""
+    registry.clear()
+    state_store.clear()
+    return {"status": "reset"}
 
 
 # --- Hook Dispatch ---

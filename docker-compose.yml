@@ -5,13 +5,23 @@ services:
     build: ./netty-core
     ports:
       - "8080:8080"     # WebSocket + HTTP API
-    depends_on:
-      - python-worker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # Docker API access for orchestrator
     environment:
-      - PYTHON_BRIDGE_URL=http://python-worker:8000
+      - DOCKER_WORKER_IMAGE=netty-python-worker
+      - DOCKER_NETWORK=netty-bridge
+      - WARM_POOL_SIZE=5
+      - IDLE_TIMEOUT_MINUTES=30
+    networks:
+      - netty-bridge
 
-  python-worker:
+  # Build-only: creates the worker image used by DockerOrchestrator.
+  # Not started by `docker-compose up` — just builds the image.
+  python-worker-image:
     build: ./python-worker
-    ports:
-      - "8000:8000"
-    restart: always     # auto-restart on script crash
+    image: netty-python-worker
+    profiles: ["build-only"]
+
+networks:
+  netty-bridge:
+    driver: bridge
