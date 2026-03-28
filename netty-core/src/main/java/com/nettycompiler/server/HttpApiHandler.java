@@ -1,6 +1,8 @@
 package com.nettycompiler.server;
 
 import com.nettycompiler.core.MessageHandler;
+import com.nettycompiler.docker.ContainerInfo;
+import com.nettycompiler.docker.ContainerSessionHandler;
 import com.nettycompiler.handler.PythonHookBridge;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -13,6 +15,10 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.Map;
 
 /**
@@ -27,6 +33,7 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
 
     private final MessageHandler messageHandler;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient http = HttpClient.newHttpClient();
 
     public HttpApiHandler(MessageHandler messageHandler) {
         super(false); // Don't auto-release — we may pass through
@@ -42,6 +49,9 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
             handleScriptUpload(ctx, request);
         } else if (method == HttpMethod.GET && "/status".equals(uri)) {
             sendJson(ctx, 200, Map.of("status", "running"));
+        } else if (method == HttpMethod.POST && uri.startsWith("/sessions/") && uri.endsWith("/hot-flash")) {
+            String sessionId = uri.split("/")[2];
+            handleHotFlash(ctx, request, sessionId);
         } else {
             // Pass through to WebSocket handler
             ctx.fireChannelRead(request.retain());
@@ -55,7 +65,8 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
             String scriptId = payload.get("script_id").asText();
             String source = payload.get("source").asText();
 
-            if (messageHandler instanceof PythonHookBridge bridge) {
+            PythonHookBridge bridge = findBridge();
+            if (bridge != null) {
                 bridge.loadScript(scriptId, source)
                         .thenAccept(result -> sendJson(ctx, 200,
                             Map.of("status", "loaded", "script_id", scriptId)))
@@ -69,6 +80,60 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
         } catch (Exception e) {
             sendJson(ctx, 400, Map.of("error", e.getMessage()));
         }
+    }
+
+    private void handleHotFlash(ChannelHandlerContext ctx, FullHttpRequest request, String sessionId) {
+        try {
+            // Find the container for this session
+            ContainerSessionHandler containerHandler = findContainerHandler();
+            if (containerHandler == null) {
+                sendJson(ctx, 501, Map.of("error", "container orchestration not enabled"));
+                return;
+            }
+
+            ContainerInfo info = containerHandler.getContainerForSession(sessionId);
+            if (info == null) {
+                sendJson(ctx, 404, Map.of("error", "no container for session " + sessionId));
+                return;
+            }
+
+            // Forward the request body to the container's /hot-flash endpoint
+            String body = request.content().toString(CharsetUtil.UTF_8);
+            HttpRequest hotFlashReq = HttpRequest.newBuilder()
+                    .uri(URI.create(info.getContainerUrl() + "/hot-flash"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+
+            http.sendAsync(hotFlashReq, HttpResponse.BodyHandlers.ofString())
+                    .thenAccept(resp -> {
+                        int status = resp.statusCode() == 200 ? 200 : resp.statusCode();
+                        try {
+                            Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
+                            sendJson(ctx, status, result);
+                        } catch (Exception e) {
+                            sendJson(ctx, status, Map.of("raw", resp.body()));
+                        }
+                    })
+                    .exceptionally(err -> {
+                        sendJson(ctx, 502, Map.of("error", "container unreachable: " + err.getMessage()));
+                        return null;
+                    });
+        } catch (Exception e) {
+            sendJson(ctx, 400, Map.of("error", e.getMessage()));
+        }
+    }
+
+    private PythonHookBridge findBridge() {
+        if (messageHandler instanceof PythonHookBridge bridge) return bridge;
+        if (messageHandler instanceof ContainerSessionHandler csh
+                && csh.getDelegate() instanceof PythonHookBridge bridge) return bridge;
+        return null;
+    }
+
+    private ContainerSessionHandler findContainerHandler() {
+        if (messageHandler instanceof ContainerSessionHandler csh) return csh;
+        return null;
     }
 
     private void sendJson(ChannelHandlerContext ctx, int status, Map<String, Object> data) {
