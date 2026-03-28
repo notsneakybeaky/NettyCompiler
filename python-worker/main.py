@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Any, Optional
 
-app = FastAPI(title="Netty Runtime Python Worker", version="2.0")
+app = FastAPI(title="NettyCompiler Python Worker", version="2.0")
 
 # --- Script Registry ---
 # scriptId -> { "handle": callable, "hooks": list, "packet_types": list }

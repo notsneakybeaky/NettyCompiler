@@ -1,4 +1,4 @@
--- Netty Runtime — SQLite schema
+-- Netty Compiler — SQLite schema
 -- Two tables. That's it.
 
 CREATE TABLE IF NOT EXISTS simulation_ticks (
