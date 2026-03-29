@@ -82,3 +82,4 @@ scripts/test/
 CLAUDE.md
 PHASE0_CLASS_MAP.md
 PROMPT_TEMPLATE.md
+node_modules/
