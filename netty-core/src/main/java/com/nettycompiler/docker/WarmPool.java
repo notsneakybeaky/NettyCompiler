@@ -22,6 +22,8 @@ public class WarmPool {
     private final ScheduledExecutorService replenisher;
     private final HttpClient http;
     private volatile boolean running = true;
+    /** Tracks containers currently being started (not yet in the idle queue). */
+    private final java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(0);
 
     /** How long to poll for uvicorn readiness before giving up. */
     private static final int READY_TIMEOUT_SECONDS = 30;
@@ -52,6 +54,7 @@ public class WarmPool {
     public void initialize() {
         System.out.println("[WarmPool] Initializing with target size " + targetSize);
         for (int i = 0; i < targetSize; i++) {
+            inFlight.incrementAndGet();
             orchestrator.startContainer()
                     .thenAcceptAsync(info -> {
                         try {
@@ -67,14 +70,16 @@ public class WarmPool {
                             System.out.println("[WarmPool] Added container to pool (size: " + idleContainers.size() + ")");
                         }
                     })
-                    .exceptionally(err -> {
-                        System.err.println("[WarmPool] Failed to start warm container: " + err.getMessage());
-                        return null;
+                    .whenComplete((v, err) -> {
+                        inFlight.decrementAndGet();
+                        if (err != null) {
+                            System.err.println("[WarmPool] Failed to start warm container: " + err.getMessage());
+                        }
                     });
         }
 
         // Start background replenishment
-        replenisher.scheduleAtFixedRate(this::replenish, 10, 5, TimeUnit.SECONDS);
+        replenisher.scheduleAtFixedRate(this::replenish, 15, 15, TimeUnit.SECONDS);
     }
 
     /**
@@ -199,11 +204,14 @@ public class WarmPool {
 
     private void replenish() {
         if (!running) return;
-        int deficit = targetSize - idleContainers.size();
+        // Subtract both idle containers AND containers that are still starting up
+        int deficit = targetSize - idleContainers.size() - inFlight.get();
         if (deficit <= 0) return;
 
-        System.out.println("[WarmPool] Replenishing " + deficit + " container(s)");
+        System.out.println("[WarmPool] Replenishing " + deficit + " container(s) (idle="
+                + idleContainers.size() + ", inFlight=" + inFlight.get() + ")");
         for (int i = 0; i < deficit; i++) {
+            inFlight.incrementAndGet();
             orchestrator.startContainer()
                     .thenAcceptAsync(info -> {
                         try {
@@ -219,9 +227,11 @@ public class WarmPool {
                             System.out.println("[WarmPool] Replenished pool (size: " + idleContainers.size() + ")");
                         }
                     })
-                    .exceptionally(err -> {
-                        System.err.println("[WarmPool] Replenish failed: " + err.getMessage());
-                        return null;
+                    .whenComplete((v, err) -> {
+                        inFlight.decrementAndGet();
+                        if (err != null) {
+                            System.err.println("[WarmPool] Replenish failed: " + err.getMessage());
+                        }
                     });
         }
     }

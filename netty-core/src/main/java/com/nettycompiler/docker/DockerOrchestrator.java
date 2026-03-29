@@ -86,8 +86,10 @@ public class DockerOrchestrator {
                 String containerUrl = "http://" + ip + ":8000";
                 ContainerInfo info = new ContainerInfo(containerId, containerUrl);
 
-                // Wait for health check to pass
-                waitForHealth(containerUrl);
+                // Don't health-check here — WarmPool.waitUntilReady() handles
+                // readiness polling with a generous 30 s timeout. The old
+                // waitForHealth() only allowed 5 s, which races against uvicorn
+                // startup under load and causes a container-creation death spiral.
                 info.setState(ContainerInfo.ContainerState.IDLE);
                 containers.put(containerId, info);
 
