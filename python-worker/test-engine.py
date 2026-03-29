@@ -4,11 +4,11 @@ import websockets
 async def test_sandbox():
     uri = "ws://localhost:8080/ws"
     async with websockets.connect(uri) as ws:
-        # Wait for the "Connected to Python Sandbox." message
+        # 1. Wait for the Netty connection greeting
         greeting = await ws.recv()
         print(f"Server: {greeting}")
 
-        # Send raw Python code
+        # 2. Send raw Python code for the server to execute
         python_code = """
 import sys
 import math
@@ -18,7 +18,7 @@ print("Error test!", file=sys.stderr)
         print("Sending code to sandbox...")
         await ws.send(python_code)
 
-        # Receive the stdout/stderr stream
+        # 3. Listen for the stdout/stderr stream coming back
         try:
             while True:
                 response = await asyncio.wait_for(ws.recv(), timeout=2.0)

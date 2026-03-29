@@ -1,0 +1,18 @@
+{
+  "name": "netty-compiler-monorepo",
+  "version": "1.0.0",
+  "description": "Polyglot monorepo for React, Node.js, Java Netty, and Python",
+  "scripts": {
+    "install:all": "npm install --prefix frontend && npm install --prefix backend",
+    "build:python": "docker build -t netty-python-worker ./python-worker",
+    "build:java": "./gradlew clean shadowJar",
+    "build:all": "npm run build:python && npm run build:java",
+    "start:backend": "npm start --prefix backend",
+    "start:frontend": "npm run dev --prefix frontend",
+    "start:netty": "gradle run",
+    "dev": "npx concurrently -c \"green,blue,magenta\" -n \"NODE,REACT,NETTY\" \"npm:start:backend\" \"npm:start:frontend\" \"npm:start:netty\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -4,11 +4,11 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.ExecCreateCmdResponse;
 import com.github.dockerjava.api.model.Frame;
-import com.nettycompiler.docker.DockerOrchestrator;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 
 import java.nio.charset.StandardCharsets;
 
@@ -26,15 +26,19 @@ public class RawDockerExecHandler extends SimpleChannelInboundHandler<TextWebSoc
     }
 
     @Override
-    public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        System.out.println("[RawDockerExec] Client connected, bound to container: " + containerId);
-        ctx.writeAndFlush(new TextWebSocketFrame("Connected to Python Sandbox."));
-        super.channelActive(ctx);
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        // Wait until the WebSocket handshake is completely finished before sending frames
+        if (evt instanceof WebSocketServerProtocolHandler.HandshakeComplete) {
+            System.out.println("[RawDockerExec] WebSocket Handshake Complete! Bound to container: " + containerId);
+            ctx.writeAndFlush(new TextWebSocketFrame("Connected to Python Sandbox."));
+        }
+        super.userEventTriggered(ctx, evt);
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) {
         String pythonCode = frame.text();
+        System.out.println("[RawDockerExec] Received code to execute...");
 
         try {
             // 1. Create the exec command to run the Python code
@@ -61,6 +65,7 @@ public class RawDockerExecHandler extends SimpleChannelInboundHandler<TextWebSoc
                     });
 
         } catch (Exception e) {
+            e.printStackTrace();
             ctx.writeAndFlush(new TextWebSocketFrame("System Error: " + e.getMessage()));
         }
     }

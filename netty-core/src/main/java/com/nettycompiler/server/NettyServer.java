@@ -1,9 +1,6 @@
 package com.nettycompiler.server;
 
-import com.nettycompiler.core.ConnectionManager;
-import com.nettycompiler.core.MessageHandler;
-import com.nettycompiler.core.Protocol;
-
+import com.nettycompiler.docker.DockerOrchestrator;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
@@ -11,23 +8,18 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 
 /**
- * NettyServer — the entry point. Boots Netty with injected Protocol and MessageHandler.
- * Knows nothing about specific protocols, Python, or application logic.
+ * NettyServer — boots Netty with the raw Docker execution engine.
  */
 public class NettyServer {
 
     private final int port;
-    private final Protocol protocol;
-    private final MessageHandler messageHandler;
-    private final ConnectionManager connectionManager;
+    private final DockerOrchestrator orchestrator;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
 
-    public NettyServer(int port, Protocol protocol, MessageHandler messageHandler) {
+    public NettyServer(int port, DockerOrchestrator orchestrator) {
         this.port = port;
-        this.protocol = protocol;
-        this.messageHandler = messageHandler;
-        this.connectionManager = new ConnectionManager();
+        this.orchestrator = orchestrator;
     }
 
     public void start() throws InterruptedException {
@@ -38,12 +30,11 @@ public class NettyServer {
             ServerBootstrap bootstrap = new ServerBootstrap();
             bootstrap.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
-                    .childHandler(new ServerInitializer(protocol, messageHandler, connectionManager));
+                    .childHandler(new ServerInitializer(orchestrator));
 
             ChannelFuture future = bootstrap.bind(port).sync();
             System.out.println("[NettyServer] Listening on port " + port);
             System.out.println("[NettyServer] WebSocket endpoint: ws://localhost:" + port + "/ws");
-            System.out.println("[NettyServer] REST API: http://localhost:" + port + "/status");
             future.channel().closeFuture().sync();
         } finally {
             shutdown();
@@ -53,9 +44,5 @@ public class NettyServer {
     public void shutdown() {
         if (bossGroup != null) bossGroup.shutdownGracefully();
         if (workerGroup != null) workerGroup.shutdownGracefully();
-    }
-
-    public ConnectionManager getConnectionManager() {
-        return connectionManager;
     }
 }
