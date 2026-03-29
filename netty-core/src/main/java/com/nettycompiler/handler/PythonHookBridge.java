@@ -76,7 +76,12 @@ public class PythonHookBridge implements MessageHandler {
         body.put("session_id", session.getId());
         body.put("hook", "on_connect");
         postAsync(baseUrlFor(session) + "/hooks/connect", body)
-                .thenAccept(response -> handleActions(session, response));
+                .thenAccept(response -> handleActions(session, response))
+                .exceptionally(err -> {
+                    System.err.println("[PythonHookBridge] Connect hook failed for session "
+                            + session.getId() + ": " + err.getMessage());
+                    return null;
+                });
     }
 
     @Override
@@ -89,7 +94,12 @@ public class PythonHookBridge implements MessageHandler {
             body.put("payload", mapper.valueToTree(message));
 
             postAsync(baseUrlFor(session) + "/hooks/packet", body)
-                    .thenAccept(response -> handleActions(session, response));
+                    .thenAccept(response -> handleActions(session, response))
+                    .exceptionally(err -> {
+                        System.err.println("[PythonHookBridge] Hook call failed for session "
+                                + session.getId() + ": " + err.getMessage());
+                        return null;
+                    });
         } catch (Exception e) {
             System.err.println("[PythonHookBridge] Failed to serialize message: " + e.getMessage());
         }
@@ -115,14 +125,19 @@ public class PythonHookBridge implements MessageHandler {
     private CompletableFuture<String> postAsync(String url, Map<String, Object> body) {
         try {
             String json = mapper.writeValueAsString(body);
+            System.out.println("[PythonHookBridge] POST " + url);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "application/json")
+                    .timeout(java.time.Duration.ofSeconds(10))
                     .POST(HttpRequest.BodyPublishers.ofString(json))
                     .build();
 
             return http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .thenApply(HttpResponse::body);
+                    .thenApply(resp -> {
+                        System.out.println("[PythonHookBridge] " + url + " -> HTTP " + resp.statusCode());
+                        return resp.body();
+                    });
         } catch (Exception e) {
             return CompletableFuture.failedFuture(e);
         }
@@ -136,17 +151,22 @@ public class PythonHookBridge implements MessageHandler {
         try {
             JsonNode root = mapper.readTree(responseJson);
             JsonNode actions = root.get("actions");
-            if (actions == null || !actions.isArray()) return;
+            if (actions == null || !actions.isArray()) {
+                System.out.println("[PythonHookBridge] No actions in response for session " + session.getId());
+                return;
+            }
 
+            System.out.println("[PythonHookBridge] Processing " + actions.size() + " action(s) for session " + session.getId());
             for (JsonNode action : actions) {
                 String type = action.get("type").asText();
                 switch (type) {
                     case "SEND" -> {
                         Message message = reconstructMessage(action);
                         if (message != null) {
+                            System.out.println("[PythonHookBridge] Sending " + message.getType() + " to session " + session.getId());
                             session.send(message);
                         } else {
-                            System.err.println("[PythonHookBridge] SEND failed — could not reconstruct message");
+                            System.err.println("[PythonHookBridge] SEND failed — could not reconstruct message from: " + action);
                         }
                     }
                     case "BLOCK" -> {
@@ -158,6 +178,7 @@ public class PythonHookBridge implements MessageHandler {
             }
         } catch (Exception e) {
             System.err.println("[PythonHookBridge] Failed to parse actions: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

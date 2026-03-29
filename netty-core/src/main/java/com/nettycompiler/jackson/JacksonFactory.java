@@ -1,5 +1,6 @@
 package com.nettycompiler.jackson;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
@@ -24,6 +25,7 @@ public class JacksonFactory {
     private ObjectMapper buildMapper() {
         ObjectMapper om = new ObjectMapper();
         om.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        om.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return om;
     }
 }

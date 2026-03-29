@@ -1,7 +1,12 @@
+"""
+Python Worker — FastAPI service for per-container script execution.
+Single active handler model: hot-flash sets the handler, hooks call it.
+"""
+
+import asyncio
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Any, Optional, Callable
-import asyncio
 
 app = FastAPI(title="NettyWorker", version="2.1")
 
@@ -10,9 +15,11 @@ active_handler: Optional[Callable] = None
 # A simple persistent dictionary for the script to use
 persistent_state: dict[str, Any] = {}
 
+
 class HotFlashPayload(BaseModel):
     source: str
-    script_id: Optional[str] = None # No longer strictly required
+    script_id: Optional[str] = None
+
 
 @app.post("/hot-flash")
 async def hot_flash(payload: HotFlashPayload):
@@ -30,6 +37,7 @@ async def hot_flash(payload: HotFlashPayload):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.post("/hooks/{hook_name}")
 async def dispatch_hook(hook_name: str, request: Request):
     """Generic hook dispatcher for connect, packet, disconnect, etc."""
@@ -45,11 +53,11 @@ async def dispatch_hook(hook_name: str, request: Request):
         else:
             result = active_handler(payload)
 
-        # Ensure result is a dict with an actions list
         actions = result.get("actions", []) if isinstance(result, dict) else []
         return {"status": "ok", "actions": actions}
     except Exception as e:
         return {"status": "error", "error": str(e), "actions": []}
+
 
 @app.post("/reset")
 async def reset():
@@ -58,6 +66,7 @@ async def reset():
     active_handler = None
     persistent_state.clear()
     return {"status": "reset"}
+
 
 @app.get("/health")
 async def health():

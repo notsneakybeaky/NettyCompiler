@@ -25,9 +25,19 @@ public class WebSocketMessageHandler extends SimpleChannelInboundHandler<Message
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        session.setState(ConnectionState.ACTIVE);
-        messageHandler.onConnect(session);
+        // Don't fire onConnect here — channelActive fires for ALL connections,
+        // including plain HTTP requests (hot-flash, /scripts, /status).
+        // We fire onConnect in userEventTriggered once the WS handshake completes.
         super.channelActive(ctx);
+    }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        if (evt instanceof io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler.HandshakeComplete) {
+            session.setState(ConnectionState.ACTIVE);
+            messageHandler.onConnect(session);
+        }
+        super.userEventTriggered(ctx, evt);
     }
 
     @Override
@@ -45,7 +55,7 @@ public class WebSocketMessageHandler extends SimpleChannelInboundHandler<Message
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         System.err.println("[WebSocketMessageHandler] Error in session " + session.getId()
-            + ": " + cause.getMessage());
+                + ": " + cause.getMessage());
         cause.printStackTrace();
         session.disconnect();
     }
