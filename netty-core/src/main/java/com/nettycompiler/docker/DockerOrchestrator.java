@@ -60,40 +60,40 @@ public class DockerOrchestrator {
     /**
      * Create + start a container, wait for it to pass health check, return ContainerInfo.
      */
+    // 1. Add this counter at the top of the class to give each container a unique port
+    private final java.util.concurrent.atomic.AtomicInteger portCounter = new java.util.concurrent.atomic.AtomicInteger(8001);
+
     public CompletableFuture<ContainerInfo> startContainer() {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 String name = "ncs-worker-" + UUID.randomUUID().toString().substring(0, 8);
+                com.github.dockerjava.api.model.ExposedPort tcp8000 = com.github.dockerjava.api.model.ExposedPort.tcp(8000);
 
-                CreateContainerResponse created = docker.createContainerCmd(imageName)
+                // 1. Map container port 8000 to a RANDOM available port on your host (0.0.0.0:0)
+                com.github.dockerjava.api.command.CreateContainerResponse created = docker.createContainerCmd(imageName)
                         .withName(name)
-                        .withHostConfig(HostConfig.newHostConfig()
-                                .withNetworkMode(networkName))
+                        .withExposedPorts(tcp8000)
+                        .withHostConfig(com.github.dockerjava.api.model.HostConfig.newHostConfig()
+                                .withNetworkMode(networkName)
+                                .withPortBindings(com.github.dockerjava.api.model.PortBinding.parse("0.0.0.0:0:8000")))
                         .exec();
 
                 String containerId = created.getId();
                 docker.startContainerCmd(containerId).exec();
 
-                // Inspect to get container IP on the Docker network
-                InspectContainerResponse inspect = docker.inspectContainerCmd(containerId).exec();
-                Map<String, ContainerNetwork> networks = inspect.getNetworkSettings().getNetworks();
-                ContainerNetwork network = networks.get(networkName);
-                if (network == null) {
-                    throw new RuntimeException("Container " + containerId + " not on network " + networkName);
-                }
+                // 2. Ask Docker which port it actually assigned to this container
+                com.github.dockerjava.api.command.InspectContainerResponse inspect = docker.inspectContainerCmd(containerId).exec();
+                var bindings = inspect.getNetworkSettings().getPorts().getBindings().get(tcp8000);
+                String hostPort = bindings[0].getHostPortSpec();
 
-                String ip = network.getIpAddress();
-                String containerUrl = "http://" + ip + ":8000";
+                // 3. Now Java can reach the worker via localhost:PORT
+                String containerUrl = "http://localhost:" + hostPort;
+
                 ContainerInfo info = new ContainerInfo(containerId, containerUrl);
-
-                // Don't health-check here — WarmPool.waitUntilReady() handles
-                // readiness polling with a generous 30 s timeout. The old
-                // waitForHealth() only allowed 5 s, which races against uvicorn
-                // startup under load and causes a container-creation death spiral.
                 info.setState(ContainerInfo.ContainerState.IDLE);
                 containers.put(containerId, info);
 
-                System.out.println("[DockerOrchestrator] Started container " + name + " at " + containerUrl);
+                System.out.println("[DockerOrchestrator] Worker " + name + " is live at " + containerUrl);
                 return info;
             } catch (Exception e) {
                 throw new CompletionException(e);

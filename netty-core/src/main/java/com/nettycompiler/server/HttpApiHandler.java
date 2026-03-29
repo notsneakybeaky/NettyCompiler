@@ -84,41 +84,23 @@ public class HttpApiHandler extends SimpleChannelInboundHandler<FullHttpRequest>
 
     private void handleHotFlash(ChannelHandlerContext ctx, FullHttpRequest request, String sessionId) {
         try {
-            // Find the container for this session
             ContainerSessionHandler containerHandler = findContainerHandler();
-            if (containerHandler == null) {
-                sendJson(ctx, 501, Map.of("error", "container orchestration not enabled"));
-                return;
-            }
-
             ContainerInfo info = containerHandler.getContainerForSession(sessionId);
-            if (info == null) {
-                sendJson(ctx, 404, Map.of("error", "no container for session " + sessionId));
-                return;
-            }
+            if (info == null) { sendJson(ctx, 404, Map.of("error", "no session")); return; }
 
-            // Forward the request body to the container's /hot-flash endpoint
-            String body = request.content().toString(CharsetUtil.UTF_8);
-            HttpRequest hotFlashReq = HttpRequest.newBuilder()
-                    .uri(URI.create(info.getContainerUrl() + "/hot-flash"))
+            // THE FIX: Copy the buffer bytes without consuming the index
+            byte[] bodyBytes = new byte[request.content().readableBytes()];
+            request.content().getBytes(request.content().readerIndex(), bodyBytes);
+            String body = new String(bodyBytes, io.netty.util.CharsetUtil.UTF_8);
+
+            java.net.http.HttpRequest hotFlashReq = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(info.getContainerUrl() + "/hot-flash"))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            http.sendAsync(hotFlashReq, HttpResponse.BodyHandlers.ofString())
-                    .thenAccept(resp -> {
-                        int status = resp.statusCode() == 200 ? 200 : resp.statusCode();
-                        try {
-                            Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
-                            sendJson(ctx, status, result);
-                        } catch (Exception e) {
-                            sendJson(ctx, status, Map.of("raw", resp.body()));
-                        }
-                    })
-                    .exceptionally(err -> {
-                        sendJson(ctx, 502, Map.of("error", "container unreachable: " + err.getMessage()));
-                        return null;
-                    });
+            http.sendAsync(hotFlashReq, java.net.http.HttpResponse.BodyHandlers.ofString())
+                    .thenAccept(resp -> sendJson(ctx, resp.statusCode(), Map.of("worker_status", resp.statusCode())));
         } catch (Exception e) {
             sendJson(ctx, 400, Map.of("error", e.getMessage()));
         }

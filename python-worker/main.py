@@ -1,176 +1,64 @@
-"""
-Python Worker — FastAPI service for script registry and hook dispatch.
-Knows about: JSON contract from PythonHookBridge.
-Does NOT know: Java exists. Netty exists. MC protocol internals.
-"""
-
-import asyncio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Optional, Callable
+import asyncio
 
-app = FastAPI(title="NettyCompiler Python Worker", version="2.0")
+app = FastAPI(title="NettyWorker", version="2.1")
 
-# --- Script Registry ---
-# scriptId -> { "handle": callable, "hooks": list, "packet_types": list }
-registry: dict[str, dict] = {}
-
-# --- Persistent State ---
-# Survives across hot-flash cycles (code reloads). Cleared on /reset (pool reuse).
-state_store: dict[str, Any] = {}
-
-
-class ScriptPayload(BaseModel):
-    script_id: str
-    source: str
-    hooks: list[str] = []
-    packet_types: list[str] = []
-
+# The single active script handler for this container
+active_handler: Optional[Callable] = None
+# A simple persistent dictionary for the script to use
+persistent_state: dict[str, Any] = {}
 
 class HotFlashPayload(BaseModel):
     source: str
-    script_id: str = "user_script"
-
-
-class HookPayload(BaseModel):
-    """Matches the JSON contract sent by PythonHookBridge (snake_case)."""
-    session_id: str
-    hook: str
-    message_type: Optional[str] = None
-    payload: dict[str, Any] = {}
-
-
-# --- Script Management ---
-
-@app.post("/scripts/load")
-async def load_script(payload: ScriptPayload):
-    """Compile and register a script. Hot swap = dict key overwrite."""
-    try:
-        namespace = {}
-        exec(compile(payload.source, payload.script_id, "exec"), namespace)
-
-        if "handle" not in namespace:
-            raise ValueError("Script must define a 'handle' function")
-
-        registry[payload.script_id] = {
-            "handle": namespace["handle"],
-            "hooks": payload.hooks,
-            "packet_types": payload.packet_types,
-        }
-
-        return {"status": "loaded", "script_id": payload.script_id}
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.delete("/scripts/{script_id}")
-async def unload_script(script_id: str):
-    """Remove a script from the registry."""
-    if script_id not in registry:
-        raise HTTPException(status_code=404, detail=f"Script '{script_id}' not found")
-    del registry[script_id]
-    return {"status": "unloaded", "script_id": script_id}
-
-
-@app.get("/scripts")
-async def list_scripts():
-    """List all registered script IDs."""
-    return {"scripts": list(registry.keys())}
-
-
-# --- Hot-Flash & Reset ---
+    script_id: Optional[str] = None # No longer strictly required
 
 @app.post("/hot-flash")
 async def hot_flash(payload: HotFlashPayload):
-    """Load new code without clearing session state.
-    The state_store dict is injected into the script namespace so
-    user code can read/write persistent state across reloads.
-    """
+    """Compiles and sets the global handler without clearing persistent_state."""
+    global active_handler
     try:
-        namespace = {"__state__": state_store}
-        exec(compile(payload.source, payload.script_id, "exec"), namespace)
+        namespace = {"__state__": persistent_state}
+        exec(compile(payload.source, "<string>", "exec"), namespace)
 
         if "handle" not in namespace:
-            raise ValueError("Script must define a 'handle' function")
+            raise ValueError("Script must define a 'handle(payload)' function")
 
-        registry[payload.script_id] = {
-            "handle": namespace["handle"],
-            "hooks": [],
-            "packet_types": [],
-        }
-
-        return {"status": "hot_flashed", "script_id": payload.script_id}
-
+        active_handler = namespace["handle"]
+        return {"status": "success", "detail": "Hot-flashed new logic"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/hooks/{hook_name}")
+async def dispatch_hook(hook_name: str, request: Request):
+    """Generic hook dispatcher for connect, packet, disconnect, etc."""
+    global active_handler
+    if not active_handler:
+        return {"status": "no_script", "actions": []}
+
+    payload = await request.json()
+
+    try:
+        if asyncio.iscoroutinefunction(active_handler):
+            result = await active_handler(payload)
+        else:
+            result = active_handler(payload)
+
+        # Ensure result is a dict with an actions list
+        actions = result.get("actions", []) if isinstance(result, dict) else []
+        return {"status": "ok", "actions": actions}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "actions": []}
 
 @app.post("/reset")
 async def reset():
-    """Clear all scripts and state. Used when returning a container to the warm pool."""
-    registry.clear()
-    state_store.clear()
+    """Wipe everything for container reuse."""
+    global active_handler
+    active_handler = None
+    persistent_state.clear()
     return {"status": "reset"}
-
-
-# --- Hook Dispatch ---
-
-async def _dispatch(hook: str, payload: HookPayload) -> dict:
-    """Dispatch a hook call to all matching scripts."""
-    results = []
-
-    for script_id, entry in registry.items():
-        # Filter: only call scripts registered for this hook
-        if entry["hooks"] and hook not in entry["hooks"]:
-            continue
-
-        # Filter: for on_packet, only call scripts registered for this message type
-        if hook == "on_packet" and entry["packet_types"]:
-            if payload.message_type not in entry["packet_types"]:
-                continue
-
-        fn = entry["handle"]
-        try:
-            if asyncio.iscoroutinefunction(fn):
-                result = await fn(payload.model_dump())
-            else:
-                result = fn(payload.model_dump())
-            results.append({"script_id": script_id, "result": result})
-        except Exception as e:
-            results.append({"script_id": script_id, "error": str(e)})
-
-    # Merge actions from all scripts
-    actions = []
-    for r in results:
-        if isinstance(r.get("result"), dict) and "actions" in r["result"]:
-            actions.extend(r["result"]["actions"])
-
-    return {"results": results, "actions": actions}
-
-
-@app.post("/hooks/connect")
-async def on_connect(payload: HookPayload):
-    return await _dispatch("on_connect", payload)
-
-
-@app.post("/hooks/packet")
-async def on_packet(payload: HookPayload):
-    return await _dispatch("on_packet", payload)
-
-
-@app.post("/hooks/disconnect")
-async def on_disconnect(payload: HookPayload):
-    return await _dispatch("on_disconnect", payload)
-
-
-@app.post("/hooks/tick")
-async def on_tick(payload: HookPayload):
-    return await _dispatch("on_tick", payload)
-
-
-# --- Health ---
 
 @app.get("/health")
 async def health():
-    return {"status": "running", "scripts_loaded": len(registry)}
+    return {"status": "running", "has_script": active_handler is not None}
